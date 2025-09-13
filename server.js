@@ -87,49 +87,60 @@ proxy1.on("proxyRes", (proxyRes, req, res) => {
     decodedText = decodedText.replaceAll(FIND, REPLACE);
     const outBuff = Buffer.from(decodedText, "utf8");
 
+    let finalBuff
+    try {
+      if (encoding === "gzip") finalBuff = zlib.gzipSync(outBuff);
+      else if (encoding === "deflate") finalBuff = zlib.deflateSync(outBuff);
+      else if (encoding === "br") finalBuff = zlib.brotliCompressSync(outBuff);
+      else finalBuff = outBuff;
+    } catch (err) {
+      console.error("Recompression failed:", err);
+      finalBuff = outBuff;
+    }
+
     Object.entries(proxyRes.headers).forEach(([k, v]) => {
       const lower = k.toLowerCase();
-      if (
-        lower === "content-length" ||
-        lower === "content-encoding" ||
-        lower === "transfer-encoding"
-      )
+      if (lower === "content-length" || lower === "transfer-encoding")
         return;
       res.setHeader(k, v);
     });
 
-    res.removeHeader("content-encoding");
-    res.setHeader("content-length", outBuff.length);
+    if (encoding) {
+      res.setHeader("content-encoding", encoding);
+    } else {
+      res.removeHeader("content-encoding");
+    }
+
+    res.setHeader("content-length", finalBuff.length);
     res.writeHead(proxyRes.statusCode);
-    res.end(outBuff);
+    res.end(finalBuff);;
   });
-});
 
-server1.listen(PROXY1_PORT, BIND_ADDR, () => {
-  const addr = server1.address();
-  console.log(
-    `Proxy1 listening on https://${addr.address}:${addr.port} → ${PROXY1_TARGET}`
-  );
-});
+  server1.listen(PROXY1_PORT, BIND_ADDR, () => {
+    const addr = server1.address();
+    console.log(
+      `Proxy1 listening on https://${addr.address}:${addr.port} → ${PROXY1_TARGET}`
+    );
+  });
 
-const proxy2 = httpProxy.createProxyServer({
-  target: PROXY2_TARGET,
-  changeOrigin: true,
-  ws: true,
-});
+  const proxy2 = httpProxy.createProxyServer({
+    target: PROXY2_TARGET,
+    changeOrigin: true,
+    ws: true,
+  });
 
-const server2 = https.createServer(sslOptions, (req, res) => {
-  proxy2.web(req, res);
-});
+  const server2 = https.createServer(sslOptions, (req, res) => {
+    proxy2.web(req, res);
+  });
 
-server2.on("upgrade", (req, socket, head) => {
-  proxy2.ws(req, socket, head);
-});
+  server2.on("upgrade", (req, socket, head) => {
+    proxy2.ws(req, socket, head);
+  });
 
-server2.listen(PROXY2_PORT, BIND_ADDR, () => {
-  const addr = server2.address();
-  console.log(
-    `Proxy2 (HTTPS+WS) listening on https://${addr.address}:${addr.port} → ${PROXY2_TARGET}`
-  );
-});
+  server2.listen(PROXY2_PORT, BIND_ADDR, () => {
+    const addr = server2.address();
+    console.log(
+      `Proxy2 (HTTPS+WS) listening on https://${addr.address}:${addr.port} → ${PROXY2_TARGET}`
+    );
+  });
 
