@@ -36,40 +36,67 @@ proxy1.on("proxyRes", (proxyRes, req, res) => {
   proxyRes.on("data", (chunk) => body.push(chunk));
 
   proxyRes.on("end", () => {
-    const encoding = proxyRes.headers["content-encoding"];
-    let buffer = Buffer.concat(body);
+    const encoding = proxyRes.headers["content-encoding"]?.toLowerCase();
+    const buffer = Buffer.concat(body);
 
-    const decompress = () => {
-      if (encoding === "gzip") return zlib.gunzipSync(buffer);
-      if (encoding === "deflate") return zlib.inflateSync(buffer);
-      if (encoding === "br") return zlib.brotliDecompressSync(buffer);
-      return buffer; // no compression
-    };
-
-    const compress = (newBuff) => {
-      if (encoding === "gzip") return zlib.gzipSync(newBuff);
-      if (encoding === "deflate") return zlib.deflateSync(newBuff);
-      if (encoding === "br") return zlib.brotliCompressSync(newBuff);
-      return newBuff;
-    };
-
-    let decoded = decompress().toString("utf8");
-
-    if (decoded.includes(FIND)) {
-      decoded = decoded.replaceAll(FIND, REPLACE);
+    // --- Fast‑path: Unknown or unsupported encoding → just forward untouched
+    const supportedEncodings = ["gzip", "deflate", "br", undefined];
+    if (!supportedEncodings.includes(encoding)) {
+      console.warn(`Unsupported encoding: ${encoding}, passing through untouched`);
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      res.end(buffer);
+      return;
     }
 
-    const outBuff = compress(Buffer.from(decoded, "utf8"));
+    // --- Try to decompress if applicable
+    let decodedText;
+    try {
+      let plainBuffer;
+      if (encoding === "gzip") plainBuffer = zlib.gunzipSync(buffer);
+      else if (encoding === "deflate") plainBuffer = zlib.inflateSync(buffer);
+      else if (encoding === "br") plainBuffer = zlib.brotliDecompressSync(buffer);
+      else plainBuffer = buffer; // already plain
 
+      decodedText = plainBuffer.toString("utf8");
+    } catch (err) {
+      console.error(`Decompression failed (encoding=${encoding}):`, err);
+      // Fallback: forward untouched
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      res.end(buffer);
+      return;
+    }
+
+    // --- Perform FIND → REPLACE if possible
+    if (decodedText.includes(FIND)) {
+      decodedText = decodedText.replaceAll(FIND, REPLACE);
+      console.log("Find and replace in: ", proxyRes)
+    }
+
+    const outBuff = Buffer.from(decodedText, "utf8");
+
+    // --- Copy headers except length/encoding/transfer
     Object.entries(proxyRes.headers).forEach(([k, v]) => {
-      if (k.toLowerCase() === "content-length") return;
+      const lower = k.toLowerCase();
+      if (
+        lower === "content-length" ||
+        lower === "content-encoding" ||
+        lower === "transfer-encoding"
+      ) {
+        return;
+      }
       res.setHeader(k, v);
     });
 
+    // --- Tell browser it's plain / uncompressed now
+    res.removeHeader("content-encoding");
     res.setHeader("content-length", outBuff.length);
+
     res.writeHead(proxyRes.statusCode);
     res.end(outBuff);
   });
+
+
+
 });
 
 server1.listen(PROXY1_PORT, BIND_ADDR, () => {
