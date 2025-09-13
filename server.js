@@ -30,73 +30,79 @@ const server1 = https.createServer(sslOptions, (req, res) => {
   proxy1.web(req, res);
 });
 
-proxy1.on("proxyRes", (proxyRes, req, res) => {
-  let body = [];
+function passthrough(proxyRes, res, buffer = null) {
+  res.writeHead(proxyRes.statusCode, proxyRes.headers);
+  if (buffer) {
+    res.end(buffer);
+  } else {
+    proxyRes.pipe(res);
+  }
+}
 
+proxy1.on("proxyRes", (proxyRes, req, res) => {
+  const method = req.method;
+  const url = req.url || "";
+
+  if (method !== "GET") return passthrough(proxyRes, res);
+
+  const isJs =
+    url.endsWith(".js") ||
+    (proxyRes.headers["content-type"] || "").includes("javascript");
+  if (!isJs) return passthrough(proxyRes, res);
+
+  const isSSE =
+    (proxyRes.headers["content-type"] || "")
+      .toLowerCase()
+      .includes("text/event-stream");
+  if (isSSE) return passthrough(proxyRes, res);
+
+  const encoding = proxyRes.headers["content-encoding"]?.toLowerCase();
+  const supportedEncodings = ["gzip", "deflate", "br", undefined];
+  if (!supportedEncodings.includes(encoding)) return passthrough(proxyRes, res);
+
+  let body = [];
   proxyRes.on("data", (chunk) => body.push(chunk));
 
   proxyRes.on("end", () => {
-    const encoding = proxyRes.headers["content-encoding"]?.toLowerCase();
     const buffer = Buffer.concat(body);
 
-    // --- Fast‑path: Unknown or unsupported encoding → just forward untouched
-    const supportedEncodings = ["gzip", "deflate", "br", undefined];
-    if (!supportedEncodings.includes(encoding)) {
-      console.warn(`Unsupported encoding: ${encoding}, passing through untouched`);
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-      res.end(buffer);
-      return;
-    }
-
-    // --- Try to decompress if applicable
-    let decodedText;
+    let plainBuffer;
     try {
-      let plainBuffer;
       if (encoding === "gzip") plainBuffer = zlib.gunzipSync(buffer);
       else if (encoding === "deflate") plainBuffer = zlib.inflateSync(buffer);
-      else if (encoding === "br") plainBuffer = zlib.brotliDecompressSync(buffer);
-      else plainBuffer = buffer; // already plain
-
-      decodedText = plainBuffer.toString("utf8");
+      else if (encoding === "br") {
+        plainBuffer = zlib.brotliDecompressSync(buffer);
+      } else plainBuffer = buffer;
     } catch (err) {
-      console.error(`Decompression failed (encoding=${encoding}):`, err);
-      // Fallback: forward untouched
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-      res.end(buffer);
-      return;
+      console.error("Decompression failed:", err);
+      return passthrough(proxyRes, res, buffer);
     }
 
-    // --- Perform FIND → REPLACE if possible
-    if (decodedText.includes(FIND)) {
-      decodedText = decodedText.replaceAll(FIND, REPLACE);
-      console.log("Find and replace in: ", proxyRes)
+    let decodedText = plainBuffer.toString("utf8");
+
+    if (!decodedText.includes(FIND)) {
+      return passthrough(proxyRes, res, buffer);
     }
 
+    decodedText = decodedText.replaceAll(FIND, REPLACE);
     const outBuff = Buffer.from(decodedText, "utf8");
 
-    // --- Copy headers except length/encoding/transfer
     Object.entries(proxyRes.headers).forEach(([k, v]) => {
       const lower = k.toLowerCase();
       if (
         lower === "content-length" ||
         lower === "content-encoding" ||
         lower === "transfer-encoding"
-      ) {
+      )
         return;
-      }
       res.setHeader(k, v);
     });
 
-    // --- Tell browser it's plain / uncompressed now
     res.removeHeader("content-encoding");
     res.setHeader("content-length", outBuff.length);
-
     res.writeHead(proxyRes.statusCode);
     res.end(outBuff);
   });
-
-
-
 });
 
 server1.listen(PROXY1_PORT, BIND_ADDR, () => {
