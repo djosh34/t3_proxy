@@ -1,15 +1,12 @@
-import http from "http";
+import https from "https";
 import httpProxy from "http-proxy";
 import zlib from "zlib";
-import dns from "dns";
+import fs from "fs";
 
-dns.lookup("t3.chat", (err, address, family) => {
-  console.log("err:", err, "address:", address, "family:", family);
-});
-
-dns.resolve4("t3.chat", (err, addresses) => {
-  console.log("resolve4:", err, addresses);
-});
+const sslOptions = {
+  key: fs.readFileSync("./certs/key.pem"),
+  cert: fs.readFileSync("./certs/cert.pem"),
+};
 
 const BIND_ADDR = process.env.PROXY_BIND || "127.0.0.1";
 const PROXY1_PORT = process.env.PROXY1_PORT || 9222;
@@ -27,7 +24,7 @@ const proxy1 = httpProxy.createProxyServer({
   selfHandleResponse: true,
 });
 
-const server1 = http.createServer((req, res) => {
+const server1 = https.createServer(sslOptions, (req, res) => {
   proxy1.web(req, res);
 });
 
@@ -76,7 +73,7 @@ proxy1.on("proxyRes", (proxyRes, req, res) => {
 server1.listen(PROXY1_PORT, BIND_ADDR, () => {
   const addr = server1.address();
   console.log(
-    `Proxy1 listening on http://${addr.address}:${addr.port} → ${PROXY1_TARGET}`
+    `Proxy1 listening on https://${addr.address}:${addr.port} → ${PROXY1_TARGET}`
   );
 });
 
@@ -86,7 +83,7 @@ const proxy2 = httpProxy.createProxyServer({
   ws: true,
 });
 
-const server2 = http.createServer((req, res) => {
+const server2 = https.createServer(sslOptions, (req, res) => {
   proxy2.web(req, res);
 });
 
@@ -97,7 +94,7 @@ server2.on("upgrade", (req, socket, head) => {
 server2.listen(PROXY2_PORT, BIND_ADDR, () => {
   const addr = server2.address();
   console.log(
-    `Proxy2 (HTTP+WS) listening on http://${addr.address}:${addr.port} → ${PROXY2_TARGET}`
+    `Proxy2 (HTTPS+WS) listening on https://${addr.address}:${addr.port} → ${PROXY2_TARGET}`
   );
 });
 
