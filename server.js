@@ -1,7 +1,15 @@
 import http from "http";
 import httpProxy from "http-proxy";
 import zlib from "zlib";
+import dns from "dns";
 
+dns.lookup("t3.chat", (err, address, family) => {
+  console.log("err:", err, "address:", address, "family:", family);
+});
+
+dns.resolve4("t3.chat", (err, addresses) => {
+  console.log("resolve4:", err, addresses);
+});
 
 const BIND_ADDR = process.env.PROXY_BIND || "127.0.0.1";
 const PROXY1_PORT = process.env.PROXY1_PORT || 9222;
