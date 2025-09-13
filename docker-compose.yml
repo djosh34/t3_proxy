@@ -4,6 +4,7 @@ services:
   t3-proxy:
     build: .
     container_name: t3-proxy
+    env_file: .env
     environment:
       - PROXY_BIND=0.0.0.0
       - PROXY1_PORT=9222
