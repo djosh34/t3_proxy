@@ -12,6 +12,10 @@ services:
       - PROXY1_REPLACE=127.0.0.1:9223
       - PROXY2_PORT=9223
       - PROXY2_TARGET=https://api.sync.t3.chat
+      - CERT_KEY_PEM_PATH=/app/certs/key.pem
+      - CERT_PEM_PATH=/app/certs/cert.pem
+    volumes:
+      - ./certs:/app/certs:ro
     ports:
       - "9222:9222"
       - "9223:9223"
