@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  t3-proxy:
+    build: .
+    container_name: t3-proxy
+    environment:
+      - PROXY_BIND=0.0.0.0
+      - PROXY1_PORT=9222
+      - PROXY1_TARGET=https://t3.chat
+      - PROXY1_FIND=api.sync.t3.chat
+      - PROXY1_REPLACE=127.0.0.1:9223
+      - PROXY2_PORT=9223
+      - PROXY2_TARGET=https://api.sync.t3.chat
+    ports:
+      - "9222:9222"
+      - "9223:9223"
+    restart: unless-stopped
